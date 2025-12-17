@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSX网格策略</title>
+    <link rel="stylesheet" href="/static/css/grid_management.css?v=1.0.5">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Top Navigation Bar -->
+        <nav class="top-navbar">
+            <div class="navbar-container">
+                <div class="navbar-brand">
+                    <div class="brand-logo">
+                        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <!-- 背景圆角矩形 -->
+                            <rect x="1.5" y="1.5" width="29" height="29" rx="7" fill="#0A0E1A" stroke="#1F2937" stroke-width="1.5"/>
+                            <!-- 网格线（水平） -->
+                            <line x1="6" y1="11" x2="26" y2="11" stroke="#1F2937" stroke-width="1"/>
+                            <line x1="6" y1="16" x2="26" y2="16" stroke="#1F2937" stroke-width="1"/>
+                            <line x1="6" y1="21" x2="26" y2="21" stroke="#1F2937" stroke-width="1"/>
+                            <!-- 网格线（垂直） -->
+                            <line x1="11" y1="6" x2="11" y2="26" stroke="#1F2937" stroke-width="1"/>
+                            <line x1="16" y1="6" x2="16" y2="26" stroke="#1F2937" stroke-width="1"/>
+                            <line x1="21" y1="6" x2="21" y2="26" stroke="#1F2937" stroke-width="1"/>
+                            <!-- 网格边框高亮 -->
+                            <rect x="6" y="6" width="20" height="20" rx="3" stroke="#3B82F6" stroke-width="1.2" fill="none"/>
+                            <!-- 抽象价格路径/网格收益曲线 -->
+                            <polyline points="7 20 11 17 15 19 19 13 23 15 25 10" fill="none" stroke="#60A5FA" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            <!-- 成交点 -->
+                            <circle cx="11" cy="17" r="1.4" fill="#10B981"/>
+                            <circle cx="19" cy="13" r="1.4" fill="#10B981"/>
+                            <circle cx="23" cy="15" r="1.4" fill="#F59E0B"/>
+                        </svg>
+                        <span class="brand-text">MSX网格策略</span>
+                    </div>
+                    <span class="brand-subtitle">Grid Strategy Management</span>
+                </div>
+                <div class="navbar-actions">
+                    
+                    <div class="navbar-status">
+                        <div class="connection-badge">
+                            <span class="badge-dot"></span>
+                            <span class="badge-text">就绪</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Dashboard Content -->
+        <main class="dashboard-main">
+            <!-- Statistics Overview Section -->
+            <section class="stats-overview">
+                <div class="section-header-bar">
+                    <div class="header-left">
+                        <h2 class="section-title">策略概览</h2>
+                        <span class="section-subtitle">实时策略统计与性能指标</span>
+                    </div>
+                    <div class="header-right">
+                        <div class="strategy-controls">
+                            <button class="btn btn-success" id="startStrategyBtn">
+                                <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                                <span>启动策略</span>
+                            </button>
+                            <button class="btn btn-danger" id="stopStrategyBtn" disabled>
+                                <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="6" y="6" width="12" height="12"/>
+                                </svg>
+                                <span>停止策略</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Metrics Grid -->
+                <div class="metrics-grid-primary">
+                    <div class="metric-card primary">
+                        <div class="metric-header">
+                            <span class="metric-title">总投入资金</span>
+                            <div class="metric-icon-wrapper">
+                                <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="5" width="20" height="14" rx="2"/>
+                                    <line x1="2" y1="10" x2="22" y2="10"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="metric-value" id="totalInvestment">--</div>
+                    </div>
+
+                    <div class="metric-card primary highlight">
+                        <div class="metric-header">
+                            <span class="metric-title">总盈亏</span>
+                            <div class="metric-icon-wrapper">
+                                <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                                    <polyline points="17 6 23 6 23 12"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="metric-value" id="totalPnL">--</div>
+                    </div>
+
+                    <div class="metric-card primary">
+                        <div class="metric-header">
+                            <span class="metric-title">总成交额</span>
+                            <div class="metric-icon-wrapper">
+                                <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="1" x2="12" y2="23"/>
+                                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="metric-value" id="totalVolume">--</div>
+                    </div>
+
+                    <div class="metric-card primary">
+                        <div class="metric-header">
+                            <span class="metric-title">平均收益率</span>
+                            <div class="metric-icon-wrapper">
+                                <svg class="metric-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="metric-value" id="avgReturn">--</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Grid Configuration Section -->
+            <section class="strategy-status-section">
+                <!-- Current Strategy Status -->
+                <div class="strategy-status-card" id="strategyStatusCard" style="display: none;">
+                    <div class="status-card-header">
+                        <h3 class="status-card-title">当前策略状态</h3>
+                    </div>
+                    <div class="status-card-content">
+                        <div class="status-info-container">
+                            <!-- 第1行：交易对 & 市场状态 -->
+                            <div class="status-info-item">
+                                <span class="status-info-label">交易对</span>
+                                <div class="status-symbol-block">
+                                    <div class="status-symbol-line">
+                                        <span class="status-symbol-main" id="statusSymbol">--</span>
+                                        <span class="status-symbol-meta">
+                                            <span class="status-direction" id="statusDirection">--</span>
+                                            <span class="status-leverage" id="statusLeverage">--</span>
+                                        </span>
+                                    </div>
+                                    <div class="status-elapsed-line">
+                                        <span class="status-elapsed-label">已运行时间</span>
+                                        <span class="status-elapsed-value" id="statusElapsedTime">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="status-info-item">
+                                <span class="status-info-label">市场状态</span>
+                                <span class="status-info-value" id="statusMarketState">--</span>
+                            </div>
+
+                            <!-- 第2行：网格收益 & 未实现收益 -->
+                            <div class="status-info-item">
+                                <span class="status-info-label">网格收益</span>
+                                <div class="status-info-value-group">
+                                    <span class="status-info-value" id="statusGridProfit">--</span>
+                                    <span class="status-info-percent" id="statusGridProfitRate">--</span>
+                                </div>
+                                <span class="status-info-subtext">已实现网格套利收益</span>
+                            </div>
+                            <div class="status-info-item">
+                                <span class="status-info-label">未实现收益</span>
+                                <div class="status-info-value-group">
+                                    <span class="status-info-value" id="statusUnrealizedProfit">--</span>
+                                    <span class="status-info-percent" id="statusUnrealizedProfitRate">--</span>
+                                </div>
+                                <span class="status-info-subtext">持仓浮动盈亏</span>
+                            </div>
+
+                            <!-- 第3行：价格区间 & 启动价格 -->
+                            <div class="status-info-item">
+                                <span class="status-info-label">价格区间</span>
+                                <span class="status-info-value" id="statusPriceRange">--</span>
+                            </div>
+                            <div class="status-info-item">
+                                <span class="status-info-label">启动价格</span>
+                                <span class="status-info-value" id="statusStartPrice">--</span>
+                            </div>
+
+                            <!-- 第4行：当前价格 & 套利次数 -->
+                            <div class="status-info-item">
+                                <span class="status-info-label">当前价格</span>
+                                <div class="status-info-value-group">
+                                    <span class="status-info-value" id="statusCurrentPrice">--</span>
+                                    <button class="refresh-btn" id="refreshPriceBtn" title="刷新价格">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="status-info-item">
+                                <span class="status-info-label">套利次数</span>
+                                <span class="status-info-value" id="statusArbitrageCount">--</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Grid Configuration Modal -->
+            <div class="modal-overlay" id="gridConfigModal">
+                <div class="modal-container modal-small">
+                    <div class="modal-header">
+                        <h3 class="modal-title">配置网格参数</h3>
+                        <button class="modal-close" id="closeConfigModal">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="gridConfigForm">
+                            <!-- Basic Settings -->
+                            <div class="form-section">
+                                <div class="form-grid form-grid-compact">
+                                    <div class="form-field">
+                                        <label class="field-label">市场类型</label>
+                                        <select id="marketType" name="market_type" class="field-input" required>
+                                            <option value="contract">合约 (Contract)</option>
+                                            <option value="spot">现货 (Spot)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field field-with-dropdown">
+                                        <label class="field-label">交易对</label>
+                                        <input
+                                            type="text"
+                                            id="symbol"
+                                            name="symbol"
+                                            class="field-input"
+                                            placeholder="输入或选择交易对，例如：AAPL、ETHUSDT"
+                                            autocomplete="off"
+                                            required
+                                        >
+                                        <div class="symbol-dropdown" id="symbolDropdown"></div>
+                                    </div>
+                                    <div class="form-field" id="directionField">
+                                        <label class="field-label">交易方向</label>
+                                        <select id="direction" name="direction" class="field-input" required>
+                                            <option value="long">做多 (Long)</option>
+                                            <option value="short">做空 (Short)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field" id="leverageField">
+                                        <label class="field-label">杠杆倍数</label>
+                                        <div class="leverage-input-group">
+                                            <input
+                                                type="range"
+                                                id="leverageSlider"
+                                                class="field-input leverage-slider"
+                                                step="1"
+                                                min="1"
+                                                max="100"
+                                            >
+                                            <input
+                                                type="number"
+                                                id="leverage"
+                                                name="leverage"
+                                                class="field-input leverage-number"
+                                                step="1"
+                                                min="1"
+                                                max="100"
+                                                placeholder="例如：10"
+                                                required
+                                            >
+                                        </div>
+                                        <span class="field-hint">合约根据交易对限制范围，现货固定 1 倍，总资金 = 投资额 × 杠杆倍数</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Price Range -->
+                            <div class="form-section">
+                                <div class="form-grid form-grid-compact">
+                                    <div class="form-field">
+                                        <label class="field-label">最低价格</label>
+                                        <input type="number" id="minPrice" name="min_price" class="field-input" 
+                                               step="0.01" placeholder="例如：3000" required>
+                                    </div>
+                                    <div class="form-field">
+                                        <label class="field-label">最高价格</label>
+                                        <input type="number" id="maxPrice" name="max_price" class="field-input" 
+                                               step="0.01" placeholder="例如：3700" required>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Grid Parameters -->
+                            <div class="form-section">
+                                <div class="form-grid form-grid-compact">
+                                    <div class="form-field">
+                                        <label class="field-label">网格数量</label>
+                                        <input type="number" id="gridCount" name="grid_count" class="field-input" 
+                                               min="2" placeholder="例如：20" required>
+                                        <span class="field-hint">网格数量，至少为 2</span>
+                                    </div>
+                                    <div class="form-field">
+                                        <label class="field-label">投资额</label>
+                                        <input type="number" id="investmentAmount" name="investment_amount" class="field-input" 
+                                               step="0.01" min="0.01" placeholder="例如：10000" required>
+                                        <span class="field-hint">投入资金（单位：USDT/USD）</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="cancelConfigBtn">取消</button>
+                        <button type="submit" class="btn btn-primary" form="gridConfigForm">保存并启动</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/grid_management.js?v=1.0.5"></script>
+</body>
+</html>
