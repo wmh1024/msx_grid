@@ -1,5 +1,10 @@
-// 网格策略管理页面 JavaScript
-// 接入 FastAPI 后端接口
+/**
+ * 网格策略管理页面 JavaScript
+ * 接入 FastAPI 后端接口
+ * 
+ * @version 1.0.8
+ * @date 2024
+ */
 
 // 全局状态
 let currentStrategyStatus = null;
@@ -32,7 +37,6 @@ let confirmOkBtn = null;
 let confirmCancelBtn = null;
 let pendingConfirmAction = null; // 当前等待确认的操作（函数）
 let startStrategyBtn = null;
-let stopStrategyBtn = null;
 let marketTypeSelect = null;
 let coTypeSelect = null;
 let coTypeField = null;
@@ -70,7 +74,6 @@ let runningStrategiesEl = null;
 let stoppedStrategiesEl = null;
 let totalInvestmentEl = null;
 let totalPnLEl = null;
-let totalVolumeEl = null;
 let avgReturnEl = null;
 
 // 交易对缓存
@@ -321,7 +324,6 @@ function initDOMElements() {
     confirmOkBtn = document.getElementById('confirmOkBtn');
     confirmCancelBtn = document.getElementById('confirmCancelBtn');
     startStrategyBtn = document.getElementById('startStrategyBtn');
-    stopStrategyBtn = document.getElementById('stopStrategyBtn');
     marketTypeSelect = document.getElementById('marketType');
     coTypeSelect = document.getElementById('coType');
     coTypeField = document.getElementById('coTypeField');
@@ -353,7 +355,6 @@ function initDOMElements() {
     stoppedStrategiesEl = document.getElementById('stoppedStrategies');
     totalInvestmentEl = document.getElementById('totalInvestment');
     totalPnLEl = document.getElementById('totalPnL');
-    totalVolumeEl = document.getElementById('totalVolume');
     avgReturnEl = document.getElementById('avgReturn');
     
     // 顶部连接状态
@@ -361,6 +362,9 @@ function initDOMElements() {
     if (connectionBadge) {
         connectionBadgeText = connectionBadge;
     }
+    
+    // 初始化策略列表元素（阶段二）
+    initStrategiesListElements();
 }
 
 // 初始化
@@ -526,7 +530,6 @@ function initEventListeners() {
     try {
         console.log('初始化事件监听器...');
         console.log('startStrategyBtn:', startStrategyBtn);
-        console.log('stopStrategyBtn:', stopStrategyBtn);
         console.log('gridConfigModal:', gridConfigModal);
         
         // 启动策略按钮 - 打开配置模态框
@@ -687,18 +690,6 @@ function initEventListeners() {
             });
         }
 
-        // 停止策略按钮
-        if (stopStrategyBtn && typeof stopStrategyBtn.addEventListener === 'function') {
-            stopStrategyBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('停止策略按钮被点击');
-                handleStopStrategy();
-            });
-            console.log('停止策略按钮事件监听器已绑定');
-        } else {
-            console.error('stopStrategyBtn 元素未找到或不是有效的DOM元素');
-        }
 
         // 刷新价格按钮
         if (refreshPriceBtn && typeof refreshPriceBtn.addEventListener === 'function') {
@@ -730,43 +721,12 @@ function initEventListeners() {
     }
 }
 
-// 加载策略状态
+// 加载策略状态（已改造为多策略支持，保留函数名以保持向后兼容）
+// 注意：此函数现在调用 loadStrategiesList() 来加载多策略列表
+// 旧的单策略逻辑已移至 loadStrategiesList() 中处理
 async function loadStrategyStatus() {
-    try {
-        const res = await fetch('/api/status');
-        if (!res.ok) {
-            // 如果策略未运行，不显示错误，但仍尝试更新连接状态
-            if (res.status === 500) {
-                updateUIForNoStrategy();
-                // 即使没有策略，也尝试获取连接状态
-                updateConnectionStatus(null);
-                return;
-            }
-            throw new Error(`获取状态失败: ${res.status}`);
-        }
-
-        const data = await res.json();
-        if (data.status === 'success' && data.data) {
-            currentStrategyStatus = data.data;
-            // 检查策略是否在运行
-            const isRunning = data.data.running || data.data.status === 'running';
-            if (isRunning) {
-                updateUIForRunningStrategy(data.data);
-            } else {
-                // 策略已停止，隐藏状态卡片并重置概览
-                updateUIForNoStrategy();
-            }
-            // 更新连接状态（使用 connected 字段）
-            updateConnectionStatus(data.data.connected);
-        } else {
-            updateUIForNoStrategy();
-            updateConnectionStatus(null);
-        }
-    } catch (error) {
-        console.error('加载策略状态失败:', error);
-        updateUIForNoStrategy();
-        updateConnectionStatus(null);
-    }
+    // 优先使用多策略接口
+    await loadStrategiesList();
     // 无论成功或失败，请求已完成，此时如果按钮处于「加载中」但状态未变更，恢复到合适的可点击状态
     resetButtonsAfterStatusLoad();
 }
@@ -963,14 +923,6 @@ function updateUIForRunningStrategy(status) {
             span.textContent = isRunning ? '启动策略' : '启动策略';
         }
     }
-    if (stopStrategyBtn) {
-        const isRunning = status.running || status.status === 'running';
-        stopStrategyBtn.disabled = !isRunning;
-        const span = stopStrategyBtn.querySelector('span');
-        if (span) {
-            span.textContent = '停止策略';
-        }
-    }
 
     // 更新统计信息
     updateStatisticsFromStatus(status);
@@ -1025,9 +977,6 @@ function updateUIForNoStrategy() {
 
     if (startStrategyBtn) {
         startStrategyBtn.disabled = false;
-    }
-    if (stopStrategyBtn) {
-        stopStrategyBtn.disabled = true;
     }
 
     // 重置策略状态卡片
@@ -1120,13 +1069,6 @@ async function doStartStrategy(params) {
             span.textContent = '启动中...';
         }
     }
-    if (stopStrategyBtn) {
-        stopStrategyBtn.disabled = true;
-        const span = stopStrategyBtn.querySelector('span');
-        if (span) {
-            span.textContent = '停止策略';
-        }
-    }
 
     try {
         const res = await fetch('/api/start', {
@@ -1149,13 +1091,6 @@ async function doStartStrategy(params) {
                     span.textContent = '启动策略';
                 }
             }
-            if (stopStrategyBtn) {
-                stopStrategyBtn.disabled = true;
-                const span = stopStrategyBtn.querySelector('span');
-                if (span) {
-                    span.textContent = '停止策略';
-                }
-            }
             return;
         }
 
@@ -1165,8 +1100,8 @@ async function doStartStrategy(params) {
         // 关闭配置模态框
         closeConfigModalHandler();
 
-        // 立即刷新状态
-        await loadStrategyStatus();
+        // 立即刷新策略列表（多策略支持）
+        await loadStrategiesList();
 
         showToast('策略启动成功！', 'success');
     } catch (error) {
@@ -1178,13 +1113,6 @@ async function doStartStrategy(params) {
             const span = startStrategyBtn.querySelector('span');
             if (span) {
                 span.textContent = '启动策略';
-            }
-        }
-        if (stopStrategyBtn) {
-            stopStrategyBtn.disabled = true;
-            const span = stopStrategyBtn.querySelector('span');
-            if (span) {
-                span.textContent = '停止策略';
             }
         }
     }
@@ -1200,16 +1128,9 @@ async function handleStopStrategy() {
     });
 }
 
-// 实际执行停止策略请求的函数
+// 实际执行停止策略请求的函数（已废弃，保留用于向后兼容）
 async function doStopStrategy() {
-    // 点击停止后：立刻置灰停止按钮并显示「停止中…」，同时禁止启动按钮，避免重复操作
-    if (stopStrategyBtn) {
-        stopStrategyBtn.disabled = true;
-        const span = stopStrategyBtn.querySelector('span');
-        if (span) {
-            span.textContent = '停止中...';
-        }
-    }
+    // 注意：此函数已废弃，停止功能现在在每个策略卡片中
     if (startStrategyBtn) {
         startStrategyBtn.disabled = true;
         const span = startStrategyBtn.querySelector('span');
@@ -1231,13 +1152,6 @@ async function doStopStrategy() {
             const msg = errorData?.detail || `停止策略失败: ${res.status}`;
             showToast(msg, 'error');
             // 请求失败时恢复按钮：启动按钮恢复到停止前状态（取决于当前 running 状态），停止按钮可再次点击
-            if (stopStrategyBtn) {
-                stopStrategyBtn.disabled = false;
-                const span = stopStrategyBtn.querySelector('span');
-                if (span) {
-                    span.textContent = '停止策略';
-                }
-            }
             if (startStrategyBtn) {
                 // 是否可点由当前状态决定，这里暂时恢复为可点，后续由 loadStrategyStatus 纠正
                 startStrategyBtn.disabled = false;
@@ -1252,21 +1166,14 @@ async function doStopStrategy() {
         const data = await res.json();
         console.log('策略停止成功:', data);
 
-        // 立即刷新状态
-        await loadStrategyStatus();
+        // 立即刷新策略列表（多策略支持）
+        await loadStrategiesList();
 
         showToast('策略已停止', 'success');
     } catch (error) {
         console.error('停止策略失败:', error);
         showToast('停止策略失败，请检查网络或后端服务。', 'error');
         // 异常时恢复按钮：保留当前策略状态下的合理配置
-        if (stopStrategyBtn) {
-            stopStrategyBtn.disabled = false;
-            const span = stopStrategyBtn.querySelector('span');
-            if (span) {
-                span.textContent = '停止策略';
-            }
-        }
         if (startStrategyBtn) {
             // 默认允许再次发起停止/启动操作，具体 running 状态由下次 /api/status 决定
             startStrategyBtn.disabled = false;
@@ -1280,36 +1187,26 @@ async function doStopStrategy() {
 
 // 在 /api/status 请求完成后，根据当前状态统一恢复按钮到互斥的稳定状态
 function resetButtonsAfterStatusLoad() {
-    if (!startStrategyBtn || !stopStrategyBtn) return;
+    if (!startStrategyBtn) return;
 
     // 如果当前已经有最新的策略状态，则以此为准
     if (currentStrategyStatus && (currentStrategyStatus.running !== undefined || currentStrategyStatus.status)) {
         const isRunning = currentStrategyStatus.running || currentStrategyStatus.status === 'running';
         startStrategyBtn.disabled = isRunning;
-        stopStrategyBtn.disabled = !isRunning;
 
         const startSpan = startStrategyBtn.querySelector('span');
         if (startSpan) {
             startSpan.textContent = '启动策略';
-        }
-        const stopSpan = stopStrategyBtn.querySelector('span');
-        if (stopSpan) {
-            stopSpan.textContent = '停止策略';
         }
         return;
     }
 
     // 如果没有有效状态（例如服务刚启动、策略未运行），默认视为未运行
     startStrategyBtn.disabled = false;
-    stopStrategyBtn.disabled = true;
 
     const startSpan = startStrategyBtn.querySelector('span');
     if (startSpan) {
         startSpan.textContent = '启动策略';
-    }
-    const stopSpan = stopStrategyBtn.querySelector('span');
-    if (stopSpan) {
-        stopSpan.textContent = '停止策略';
     }
 }
 
@@ -1408,15 +1305,6 @@ function updateStatisticsFromStatus(status) {
         totalPnLEl.className = `metric-value ${pnlClass}`;
     }
 
-    // 更新成交额：使用 summary.total_volume
-    if (totalVolumeEl) {
-        if (summary.total_volume !== undefined && summary.total_volume !== null) {
-            totalVolumeEl.textContent = `$${formatNumber(summary.total_volume)}`;
-        } else {
-            totalVolumeEl.textContent = '--';
-        }
-    }
-
     // 更新收益率：使用 summary.annualized_return
     if (avgReturnEl) {
         if (summary.annualized_return !== undefined && summary.annualized_return !== null) {
@@ -1450,9 +1338,6 @@ function resetStatistics() {
         totalPnLEl.textContent = '--';
         totalPnLEl.className = 'metric-value';
     }
-    if (totalVolumeEl) {
-        totalVolumeEl.textContent = '--';
-    }
     if (avgReturnEl) {
         avgReturnEl.textContent = '--';
         avgReturnEl.className = 'metric-value';
@@ -1476,3 +1361,523 @@ window.addEventListener('beforeunload', () => {
         clearInterval(statusUpdateInterval);
     }
 });
+
+// ==================== 阶段二：多策略支持 ====================
+
+// 全局状态：策略列表
+let strategiesList = [];
+let expandedStrategySymbol = null; // 当前展开的策略 symbol
+
+// 策略列表 DOM 元素
+let strategiesListContainer = null;
+let strategiesEmptyState = null;
+let refreshStrategiesBtn = null;
+
+// 初始化策略列表相关 DOM 元素
+function initStrategiesListElements() {
+    strategiesListContainer = document.getElementById('strategiesList');
+    strategiesEmptyState = document.getElementById('strategiesEmptyState');
+    refreshStrategiesBtn = document.getElementById('refreshStrategiesBtn');
+    
+    if (refreshStrategiesBtn) {
+        refreshStrategiesBtn.addEventListener('click', () => {
+            loadStrategiesList();
+        });
+    }
+}
+
+// 加载策略列表（多策略支持）
+async function loadStrategiesList() {
+    try {
+        const res = await fetch('/api/strategies');
+        if (!res.ok) {
+            if (res.status === 500) {
+                renderStrategiesList([]);
+                updateStatisticsFromStrategies([]);
+                return;
+            }
+            throw new Error(`获取策略列表失败: ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data.status === 'success' && data.data) {
+            // 检查返回的是策略列表还是单个策略
+            if (data.data.strategies && Array.isArray(data.data.strategies)) {
+                // 多策略模式
+                strategiesList = data.data.strategies;
+                renderStrategiesList(strategiesList);
+                updateStatisticsFromStrategies(strategiesList, data.data);
+                updateConnectionStatus(data.data.connected);
+            } else if (data.data.symbol) {
+                // 单策略模式（向后兼容）
+                strategiesList = [data.data];
+                renderStrategiesList(strategiesList);
+                updateStatisticsFromStrategies(strategiesList);
+                updateConnectionStatus(data.data.connected);
+            } else {
+                strategiesList = [];
+                renderStrategiesList([]);
+                updateStatisticsFromStrategies([]);
+            }
+        } else {
+            strategiesList = [];
+            renderStrategiesList([]);
+            updateStatisticsFromStrategies([]);
+        }
+    } catch (error) {
+        console.error('加载策略列表失败:', error);
+        strategiesList = [];
+        renderStrategiesList([]);
+        updateStatisticsFromStrategies([]);
+    }
+}
+
+// 渲染策略列表
+function renderStrategiesList(strategies) {
+    if (!strategiesListContainer) return;
+
+    // 清空列表
+    strategiesListContainer.innerHTML = '';
+
+    // 如果没有策略，显示空状态
+    if (!strategies || strategies.length === 0) {
+        if (strategiesEmptyState) {
+            strategiesEmptyState.style.display = 'block';
+        }
+        return;
+    }
+
+    // 隐藏空状态
+    if (strategiesEmptyState) {
+        strategiesEmptyState.style.display = 'none';
+    }
+
+    // 渲染每个策略
+    strategies.forEach(strategy => {
+        const strategyItem = createStrategyListItem(strategy);
+        strategiesListContainer.appendChild(strategyItem);
+    });
+}
+
+// 创建策略列表项
+function createStrategyListItem(strategy) {
+    const item = document.createElement('div');
+    item.className = 'strategy-list-item';
+    item.dataset.symbol = strategy.symbol;
+
+    const isRunning = strategy.running || false;
+    const summary = strategy.summary || {};
+    const position = strategy.position || {};
+    const buyOrder = strategy.buy_order || {};
+    const sellOrder = strategy.sell_order || {};
+    const direction = strategy.direction || 'long';
+    const leverage = strategy.leverage || 1;
+    const currentPrice = strategy.current_price || 0;
+    const totalPnl = summary.total_pnl || 0;
+    const gridProfit = summary.grid_profit || 0;
+    const unrealizedPnl = summary.unrealized_pnl || 0;
+    const arbitrageCount = summary.arbitrage_count || 0;
+
+    // 方向颜色类
+    const directionClass = direction === 'long' ? 'direction-long' : 'direction-short';
+    const directionText = direction === 'long' ? '做多' : '做空';
+    
+    // 盈亏颜色类
+    const pnlClass = totalPnl >= 0 ? 'positive' : 'negative';
+    const pnlPrefix = totalPnl >= 0 ? '+' : '-';
+    const gridProfitClass = gridProfit >= 0 ? 'positive' : 'negative';
+    const gridProfitPrefix = gridProfit >= 0 ? '+' : '-';
+    const unrealizedPnlClass = unrealizedPnl >= 0 ? 'positive' : 'negative';
+    const unrealizedPnlPrefix = unrealizedPnl >= 0 ? '+' : '-';
+
+    // 获取启动价格和价格区间
+    const startPrice = strategy.start_price || 0;
+    const priceRange = strategy.price_range || [];
+    const priceRangeText = priceRange.length === 2 
+        ? `${formatNumber(priceRange[0])}-${formatNumber(priceRange[1])}` 
+        : '--';
+
+    item.innerHTML = `
+        <div class="strategy-item-content">
+            <!-- 第一行：交易对、方向、杠杆、操作按钮 -->
+            <div class="strategy-item-row strategy-item-row-1">
+                <div class="strategy-symbol-block">
+                    <span class="strategy-symbol">${strategy.symbol}</span>
+                    <span class="strategy-meta">
+                        <span class="strategy-direction ${directionClass}">${directionText}</span>
+                        <span class="strategy-leverage">${leverage}X</span>
+                    </span>
+                </div>
+                <div class="strategy-item-actions-top">
+                    ${isRunning ? `
+                        <button class="btn btn-sm btn-warning" 
+                                data-action="stop" 
+                                data-symbol="${strategy.symbol}">
+                            停止
+                        </button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-danger" data-action="delete" data-symbol="${strategy.symbol}">
+                        删除
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 第二行：网格收益、价格区间、套利次数 -->
+            <div class="strategy-item-row strategy-item-row-2">
+                <div class="strategy-info-group">
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">网格收益</span>
+                        <span class="strategy-info-value ${gridProfitClass}">${gridProfitPrefix}$${formatNumber(Math.abs(gridProfit))}</span>
+                    </div>
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">价格区间</span>
+                        <span class="strategy-info-value">${priceRangeText}</span>
+                    </div>
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">套利次数</span>
+                        <span class="strategy-info-value">${arbitrageCount}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 第三行：未实现收益、启动价格、当前价格 -->
+            <div class="strategy-item-row strategy-item-row-3">
+                <div class="strategy-info-group">
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">未实现收益</span>
+                        <span class="strategy-info-value ${unrealizedPnlClass}">${unrealizedPnlPrefix}$${formatNumber(Math.abs(unrealizedPnl))}</span>
+                    </div>
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">启动价格</span>
+                        <span class="strategy-info-value">${startPrice ? `$${formatNumber(startPrice)}` : '--'}</span>
+                    </div>
+                    <div class="strategy-info-item">
+                        <span class="strategy-info-label">当前价格</span>
+                        <span class="strategy-info-value">$${formatNumber(currentPrice)}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 绑定事件（按钮现在在顶部）
+    const stopBtn = item.querySelector('[data-action="stop"]');
+    const deleteBtn = item.querySelector('[data-action="delete"]');
+
+    // 停止按钮（仅在运行中时显示）
+    if (stopBtn) {
+        stopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleStopStrategy(strategy.symbol);
+        });
+    }
+
+    // 删除按钮
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleDeleteStrategy(strategy.symbol);
+        });
+    }
+
+    return item;
+}
+
+// 切换策略详情展开/收起
+function toggleStrategyDetails(symbol) {
+    const detailsEl = document.getElementById(`details-${symbol}`);
+    const detailsBtn = document.querySelector(`[data-action="details"][data-symbol="${symbol}"]`);
+    if (!detailsEl || !detailsBtn) return;
+
+    const isExpanded = detailsEl.style.display !== 'none';
+    const icon = detailsBtn.querySelector('.details-icon');
+    
+    if (isExpanded) {
+        // 收起
+        detailsEl.style.display = 'none';
+        expandedStrategySymbol = null;
+        if (icon) {
+            icon.innerHTML = '<polyline points="6 9 12 15 18 9"/>';
+            icon.style.transform = 'rotate(0deg)';
+        }
+    } else {
+        // 展开
+        // 先收起其他已展开的详情
+        if (expandedStrategySymbol && expandedStrategySymbol !== symbol) {
+            const otherDetails = document.getElementById(`details-${expandedStrategySymbol}`);
+            const otherBtn = document.querySelector(`[data-action="details"][data-symbol="${expandedStrategySymbol}"]`);
+            if (otherDetails) {
+                otherDetails.style.display = 'none';
+            }
+            if (otherBtn) {
+                const otherIcon = otherBtn.querySelector('.details-icon');
+                if (otherIcon) {
+                    otherIcon.innerHTML = '<polyline points="6 9 12 15 18 9"/>';
+                    otherIcon.style.transform = 'rotate(0deg)';
+                }
+            }
+        }
+        
+        // 加载并显示详情
+        loadStrategyDetails(symbol, detailsEl);
+        detailsEl.style.display = 'block';
+        expandedStrategySymbol = symbol;
+        if (icon) {
+            icon.innerHTML = '<polyline points="6 15 12 9 18 15"/>';
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+}
+
+// 加载策略详情
+async function loadStrategyDetails(symbol, container) {
+    try {
+        const res = await fetch(`/api/strategies/${symbol}`);
+        if (!res.ok) {
+            throw new Error(`获取策略详情失败: ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data.status === 'success' && data.data) {
+            renderStrategyDetails(data.data, container);
+        }
+    } catch (error) {
+        console.error('加载策略详情失败:', error);
+        container.innerHTML = '<div class="error-message">加载详情失败</div>';
+    }
+}
+
+// 渲染策略详情
+function renderStrategyDetails(strategy, container) {
+    const summary = strategy.summary || {};
+    const position = strategy.position || {};
+    const buyOrder = strategy.buy_order || {};
+    const sellOrder = strategy.sell_order || {};
+
+    container.innerHTML = `
+        <div class="strategy-details-content">
+            <div class="details-section">
+                <h4 class="details-section-title">基本信息</h4>
+                <div class="details-grid">
+                    <div class="details-item">
+                        <span class="details-label">价格区间</span>
+                        <span class="details-value">${strategy.price_range ? `${formatNumber(strategy.price_range[0])} - ${formatNumber(strategy.price_range[1])}` : '--'}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">启动价格</span>
+                        <span class="details-value">${strategy.start_price ? formatNumber(strategy.start_price) : '--'}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">网格间距</span>
+                        <span class="details-value">${strategy.grid_spacing ? `${(strategy.grid_spacing * 100).toFixed(2)}%` : '--'}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">投资额</span>
+                        <span class="details-value">$${formatNumber(strategy.investment_amount || 0)}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="details-section">
+                <h4 class="details-section-title">持仓信息</h4>
+                <div class="details-grid">
+                    <div class="details-item">
+                        <span class="details-label">持仓数量</span>
+                        <span class="details-value">${formatNumber(position.size || 0)}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">持仓均价</span>
+                        <span class="details-value">${position.entryPrice ? formatNumber(position.entryPrice) : '--'}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">未实现盈亏</span>
+                        <span class="details-value ${summary.unrealized_pnl >= 0 ? 'positive' : 'negative'}">
+                            ${summary.unrealized_pnl !== undefined ? `${summary.unrealized_pnl >= 0 ? '+' : '-'}$${formatNumber(Math.abs(summary.unrealized_pnl || 0))}` : '--'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="details-section">
+                <h4 class="details-section-title">订单信息</h4>
+                <div class="details-grid">
+                    <div class="details-item">
+                        <span class="details-label">买单</span>
+                        <span class="details-value">${buyOrder.price ? `$${formatNumber(buyOrder.price)} (${formatNumber(buyOrder.volume || 0)})` : '无'}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">卖单</span>
+                        <span class="details-value">${sellOrder.price ? `$${formatNumber(sellOrder.price)} (${formatNumber(sellOrder.volume || 0)})` : '无'}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="details-section">
+                <h4 class="details-section-title">统计信息</h4>
+                <div class="details-grid">
+                    <div class="details-item">
+                        <span class="details-label">网格收益</span>
+                        <span class="details-value ${summary.grid_profit >= 0 ? 'positive' : 'negative'}">
+                            ${summary.grid_profit !== undefined ? `${summary.grid_profit >= 0 ? '+' : '-'}$${formatNumber(Math.abs(summary.grid_profit || 0))}` : '--'}
+                        </span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">套利次数</span>
+                        <span class="details-value">${summary.arbitrage_count || 0}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">网格次数</span>
+                        <span class="details-value">${summary.grid_count || 0}</span>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">年化收益</span>
+                        <span class="details-value ${summary.annualized_return >= 0 ? 'positive' : 'negative'}">
+                            ${summary.annualized_return !== undefined ? `${summary.annualized_return >= 0 ? '+' : '-'}${formatNumber(Math.abs(summary.annualized_return || 0))}%` : '--'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// 停止策略
+async function handleStopStrategy(symbol) {
+    showConfirmModal({
+        title: '确认停止策略',
+        message: `确定要停止 ${symbol} 的策略吗？`,
+        onConfirm: async () => {
+            try {
+                const res = await fetch(`/api/strategies/${symbol}/stop`, {
+                    method: 'POST',
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => null);
+                    const msg = errorData?.detail || `停止策略失败: ${res.status}`;
+                    showToast(msg, 'error');
+                    return;
+                }
+
+                showToast(`策略 ${symbol} 已停止`, 'success');
+                await loadStrategiesList();
+            } catch (error) {
+                console.error('停止策略失败:', error);
+                showToast('停止策略失败，请检查网络或后端服务。', 'error');
+            }
+        },
+    });
+}
+
+// 删除策略
+async function handleDeleteStrategy(symbol) {
+    showConfirmModal({
+        title: '确认删除策略',
+        message: `确定要删除 ${symbol} 的策略吗？此操作不可恢复。`,
+        onConfirm: async () => {
+            try {
+                const res = await fetch(`/api/strategies/${symbol}`, {
+                    method: 'DELETE',
+                });
+
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => null);
+                    const msg = errorData?.detail || `删除策略失败: ${res.status}`;
+                    showToast(msg, 'error');
+                    return;
+                }
+
+                showToast(`策略 ${symbol} 已删除`, 'success');
+                await loadStrategiesList();
+            } catch (error) {
+                console.error('删除策略失败:', error);
+                showToast('删除策略失败，请检查网络或后端服务。', 'error');
+            }
+        },
+    });
+}
+
+// 从策略列表计算统计信息
+function calculateSummaryStats(strategies) {
+    if (!strategies || strategies.length === 0) {
+        return {
+            total: 0,
+            running: 0,
+            stopped: 0,
+            totalInvestment: 0,
+            totalPnl: 0,
+            avgReturn: 0,
+        };
+    }
+
+    const total = strategies.length;
+    const running = strategies.filter(s => s.running || false).length;
+    const stopped = total - running;
+
+    let totalInvestment = 0;
+    let totalPnl = 0;
+    let totalInvestmentForReturn = 0;
+
+    strategies.forEach(strategy => {
+        const investment = strategy.investment_amount || 0;
+        totalInvestment += investment;
+
+        const summary = strategy.summary || {};
+        totalPnl += summary.total_pnl || 0;
+
+        if (investment > 0) {
+            totalInvestmentForReturn += investment;
+        }
+    });
+
+    const avgReturn = totalInvestmentForReturn > 0 
+        ? (totalPnl / totalInvestmentForReturn) * 100 
+        : 0;
+
+    return {
+        total,
+        running,
+        stopped,
+        totalInvestment,
+        totalPnl,
+        avgReturn,
+    };
+}
+
+// 从策略列表更新统计信息
+function updateStatisticsFromStrategies(strategies, summaryData = null) {
+    const stats = calculateSummaryStats(strategies);
+
+    // 总策略数
+    if (totalStrategiesEl) {
+        totalStrategiesEl.textContent = stats.total.toString();
+    }
+
+    // 运行中/已停止策略数
+    if (runningStrategiesEl) {
+        runningStrategiesEl.textContent = stats.running.toString();
+    }
+    if (stoppedStrategiesEl) {
+        stoppedStrategiesEl.textContent = stats.stopped.toString();
+    }
+
+    // 总投入资金
+    if (totalInvestmentEl) {
+        totalInvestmentEl.textContent = stats.totalInvestment > 0 
+            ? `$${formatNumber(stats.totalInvestment)}` 
+            : '--';
+    }
+
+    // 总盈亏
+    if (totalPnLEl) {
+        const pnlClass = stats.totalPnl >= 0 ? 'positive' : 'negative';
+        const pnlPrefix = stats.totalPnl >= 0 ? '+' : '-';
+        totalPnLEl.textContent = `${pnlPrefix}$${formatNumber(Math.abs(stats.totalPnl))}`;
+        totalPnLEl.className = `metric-value ${pnlClass}`;
+    }
+
+    // 平均收益率
+    if (avgReturnEl) {
+        const returnClass = stats.avgReturn >= 0 ? 'positive' : 'negative';
+        const returnPrefix = stats.avgReturn >= 0 ? '+' : '-';
+        avgReturnEl.textContent = `${returnPrefix}${formatNumber(Math.abs(stats.avgReturn))}%`;
+        avgReturnEl.className = `metric-value ${returnClass}`;
+    }
+}

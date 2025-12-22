@@ -72,10 +72,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 关闭阶段：清理资源
     log.info("正在清理资源...")
     
-    # 停止策略（stop 方法内部会取消任务）
-    if strategy and strategy._status:
-        log.info("正在停止网格策略...")
-        await strategy.stop()
+    # 停止所有策略（stop 方法内部会取消任务）
+    if strategy:
+        log.info("正在停止所有网格策略...")
+        await strategy.stop()  # stop() 不传参数会停止所有策略
         
        
     # 断开交易所连接
@@ -105,14 +105,14 @@ async def hello() -> Dict[str, Any]:
 
 @app.post("/api/start")
 async def start_grid(request: GridStartRequest) -> Dict[str, Any]:
-    """启动网格策略
+    """启动网格策略（支持多 symbol）
     
     接收网格参数并启动策略
     
     参数说明：
     - params: 字典形式传入网格参数
-      - 必需参数：symbol, min_price, max_price, direction, grid_spacing, investment_amount
-      - 可选参数：asset_type (默认 "crypto"), market_type (默认 "contract")
+      - 必需参数：symbol, min_price, max_price, direction, grid_spacing, investment_amount, leverage
+      - 可选参数：asset_type (默认 "crypto"), market_type (默认 "contract"), co_type
     
     示例：
     {
@@ -123,6 +123,7 @@ async def start_grid(request: GridStartRequest) -> Dict[str, Any]:
             "direction": "long",
             "grid_spacing": 0.005,
             "investment_amount": 10000,
+            "leverage": 10,
             "asset_type": "crypto",
             "market_type": "contract"
         }
@@ -132,9 +133,6 @@ async def start_grid(request: GridStartRequest) -> Dict[str, Any]:
     
     if not strategy:
         raise HTTPException(status_code=500, detail="策略实例未初始化")
-    
-    if strategy._status:
-        raise HTTPException(status_code=400, detail="策略已在运行中")
     
     try:
         # 从请求中提取参数
@@ -156,26 +154,29 @@ async def start_grid(request: GridStartRequest) -> Dict[str, Any]:
  
 
 @app.post("/api/stop")
-async def stop_grid() -> Dict[str, Any]:
-    """停止网格策略"""
+async def stop_grid(symbol: Optional[str] = None) -> Dict[str, Any]:
+    """停止网格策略（支持多 symbol）
+    
+    参数：
+        symbol: 可选，指定要停止的 symbol。如果不传，则停止所有策略
+    """
     global strategy
     
     if not strategy:
         raise HTTPException(status_code=500, detail="策略实例未初始化")
     
-    if not strategy._status:
-        return {
-            "status": "success",
-            "message": "策略未在运行"
-        }
-    
     try:
         # 停止策略（stop 方法内部会取消任务）
-        await strategy.stop()
+        await strategy.stop(symbol)
+        
+        if symbol:
+            message = f"网格策略已停止: {symbol}"
+        else:
+            message = "所有网格策略已停止"
         
         return {
             "status": "success",
-            "message": "网格策略已停止"
+            "message": message
         }
     except Exception as e:
         log.error(f"停止策略失败: {e}")
@@ -183,15 +184,19 @@ async def stop_grid() -> Dict[str, Any]:
 
 
 @app.get("/api/status")
-async def get_status() -> Dict[str, Any]:
-    """获取网格策略的运行状态"""
+async def get_status(symbol: Optional[str] = None) -> Dict[str, Any]:
+    """获取网格策略的运行状态（支持多 symbol）
+    
+    参数：
+        symbol: 可选，指定要查询的 symbol。如果不传，返回所有策略的状态列表
+    """
     global strategy
     
     if not strategy:
         raise HTTPException(status_code=500, detail="策略实例未初始化")
     
     try:
-        status =  strategy.get_status()
+        status = strategy.get_status(symbol)
         return {
             "status": "success",
             "data": status
@@ -238,6 +243,145 @@ async def get_free_balance() -> Dict[str, Any]:
     except Exception as e:
         log.error(f"获取可用余额失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取可用余额失败: {str(e)}")
+
+
+@app.post("/api/strategies")
+async def create_strategy(request: GridStartRequest) -> Dict[str, Any]:
+    """创建新策略（新接口）
+    
+    接收网格参数并创建策略，与 /api/start 功能相同，但接口路径更符合 RESTful 规范
+    
+    参数说明：
+    - params: 字典形式传入网格参数
+      - 必需参数：symbol, min_price, max_price, direction, grid_spacing, investment_amount, leverage
+      - 可选参数：asset_type (默认 "crypto"), market_type (默认 "contract"), co_type
+    """
+    global strategy
+    
+    if not strategy:
+        raise HTTPException(status_code=500, detail="策略实例未初始化")
+    
+    try:
+        params = request.params
+        result = await strategy.start(params)
+        log.info(f"创建策略结果: {result}")
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        log.error(f"参数验证失败: {e}")
+        raise HTTPException(status_code=400, detail=f"参数验证失败: {str(e)}")
+    except Exception as e:
+        log.error(f"创建策略失败: {e}")
+        raise HTTPException(status_code=500, detail=f"创建策略失败: {str(e)}")
+
+
+@app.get("/api/strategies")
+async def list_strategies() -> Dict[str, Any]:
+    """获取所有策略列表（新接口）"""
+    global strategy
+    
+    if not strategy:
+        raise HTTPException(status_code=500, detail="策略实例未初始化")
+    
+    try:
+        status = strategy.get_status()  # 不传 symbol 返回所有策略
+        return {
+            "status": "success",
+            "data": status
+        }
+    except Exception as e:
+        log.error(f"获取策略列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取策略列表失败: {str(e)}")
+
+
+@app.get("/api/strategies/{symbol}")
+async def get_strategy_status(symbol: str) -> Dict[str, Any]:
+    """获取指定 symbol 的策略状态（新接口）
+    
+    参数：
+        symbol: 交易对符号
+    """
+    global strategy
+    
+    if not strategy:
+        raise HTTPException(status_code=500, detail="策略实例未初始化")
+    
+    try:
+        status = strategy.get_status(symbol)
+        if not status:
+            raise HTTPException(status_code=404, detail=f"策略 {symbol} 不存在")
+        
+        return {
+            "status": "success",
+            "data": status
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"获取策略状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取策略状态失败: {str(e)}")
+
+
+@app.post("/api/strategies/{symbol}/stop")
+async def stop_strategy(symbol: str) -> Dict[str, Any]:
+    """停止指定 symbol 的策略（新接口）
+    
+    参数：
+        symbol: 交易对符号
+    """
+    global strategy
+    
+    if not strategy:
+        raise HTTPException(status_code=500, detail="策略实例未初始化")
+    
+    try:
+        await strategy.stop(symbol)
+        return {
+            "status": "success",
+            "message": f"网格策略已停止: {symbol}"
+        }
+    except Exception as e:
+        log.error(f"停止策略失败: {e}")
+        raise HTTPException(status_code=500, detail=f"停止策略失败: {str(e)}")
+
+
+@app.delete("/api/strategies/{symbol}")
+async def delete_strategy(symbol: str) -> Dict[str, Any]:
+    """删除指定 symbol 的策略（新接口）
+    
+    参数：
+        symbol: 交易对符号
+    
+    注意：此操作会停止策略并从内存中移除，但不会删除持久化的策略文件
+    """
+    global strategy
+    
+    if not strategy:
+        raise HTTPException(status_code=500, detail="策略实例未初始化")
+    
+    try:
+        symbol = symbol.strip().upper()
+        
+        # 先停止策略
+        await strategy.stop(symbol)
+        
+        # 从字典中移除
+        if symbol in strategy.symbols:
+            del strategy.symbols[symbol]
+            log.info(f"策略已删除: {symbol}")
+        else:
+            raise HTTPException(status_code=404, detail=f"策略 {symbol} 不存在")
+        
+        return {
+            "status": "success",
+            "message": f"策略已删除: {symbol}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"删除策略失败: {e}")
+        raise HTTPException(status_code=500, detail=f"删除策略失败: {str(e)}")
 
 
 @app.get("/api/symbols")
