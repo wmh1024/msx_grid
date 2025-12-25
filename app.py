@@ -1,6 +1,15 @@
 from pathlib import Path
 from typing import AsyncIterator, Dict, Any, Optional
 import asyncio
+import sys
+import platform
+
+# Windows 上需要设置事件循环策略以支持 Playwright
+if platform.system() == "Windows":
+    # 在 Windows 上，Playwright 需要 ProactorEventLoop 来支持 subprocess
+    # ProactorEventLoop 支持子进程操作，这是 Playwright 启动浏览器进程所必需的
+    if sys.version_info >= (3, 8):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -443,6 +452,13 @@ async def get_symbols(market_type: str = None, co_type: int = None) -> Dict[str,
 
 
 if __name__ == "__main__":
+    # 在 Windows 上，必须在创建事件循环之前设置策略
+    # 这必须在导入 uvicorn 之前完成
+    if platform.system() == "Windows":
+        if sys.version_info >= (3, 8):
+            # 确保使用 ProactorEventLoop 策略（Playwright 需要支持 subprocess）
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
 

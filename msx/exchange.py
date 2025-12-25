@@ -12,12 +12,26 @@ import json
 from datetime import datetime
 from pathlib import Path
 import traceback
+import sys
+import platform
 from playwright.async_api import async_playwright
 from typing import Optional, Dict, Any, List, Callable
 from functools import wraps
 from loguru import logger as log
 from .models import OrderInfo, Position
 import time
+
+# Windows 上需要设置事件循环策略以支持 Playwright
+if platform.system() == "Windows":
+    if sys.version_info >= (3, 8):
+        # 确保使用 ProactorEventLoop 策略（Playwright 需要支持 subprocess）
+        # ProactorEventLoop 支持子进程操作，这是 Playwright 启动浏览器进程所必需的
+        try:
+            current_policy = asyncio.get_event_loop_policy()
+            if not isinstance(current_policy, asyncio.WindowsProactorEventLoopPolicy):
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        except Exception:
+            pass  # 如果已经设置过或无法设置，忽略错误
 # ========== 配置区 ==========
 URL_KEYWORDS = [
     "contract-trading", "api", "trade", "market", "depth",
@@ -243,6 +257,16 @@ class MsxExchange:
             return
         
         try:
+            # 在 Windows 上，确保事件循环策略正确设置
+            if platform.system() == "Windows" and sys.version_info >= (3, 8):
+                try:
+                    loop = asyncio.get_running_loop()
+                    # 检查当前循环类型，如果不对则记录警告
+                    # 但主要依赖文件顶部的设置
+                except RuntimeError:
+                    # 没有运行中的循环，可以设置策略
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.connect_over_cdp(self.cdp_url)
             
@@ -267,9 +291,26 @@ class MsxExchange:
             
             if self.verbose:
                 print("✅ 已连接到 Chrome DevTools Protocol")
-        except Exception as e:
-            print(f"❌ 连接失败: {e}")
+        except NotImplementedError as e:
+            error_msg = (
+                f"❌ 连接失败: {e}\n"
+                "这是 Windows 系统上的已知问题。请确保：\n"
+                "1. 使用 Python 3.8 或更高版本\n"
+                "2. 在应用启动前已设置正确的事件循环策略\n"
+                "3. 如果通过 uvicorn 启动，请使用: python app.py 而不是直接使用 uvicorn 命令"
+            )
+            print(error_msg)
+            if self.verbose:
+                log.error(error_msg)
             self._connected = False
+            raise
+        except Exception as e:
+            error_msg = f"❌ 连接失败: {e}"
+            print(error_msg)
+            if self.verbose:
+                log.error(f"连接失败详情: {traceback.format_exc()}")
+            self._connected = False
+            raise
     
     async def disconnect(self):
         """断开连接并清理资源"""
@@ -492,7 +533,7 @@ class MsxExchange:
                 log.warning(f"合约交易对列表格式异常: {product_list}")
                 return []
 
-            # 只返回前端需要的精简字段：id, symbol, name, type, leverTypes
+            # 返回精简字段：id, symbol, name, type, leverTypes, price
             result: List[Dict[str, Any]] = []
 
             for product in product_list:
@@ -500,12 +541,19 @@ class MsxExchange:
                 if not symbol:
                     continue
 
+                # 价格字段（部分接口可能没有，做容错处理）
+                try:
+                    price = float(product.get("price", 0) or 0)
+                except (TypeError, ValueError):
+                    price = 0.0
+
                 item = {
                     "id": str(product.get("id", "")),
                     "symbol": symbol,
                     "name": product.get("name", ""),
                     "type": int(product.get("type", 1) or 1),
                     "leverTypes": product.get("leverTypes", ""),
+                    "price": price,
                 }
                 result.append(item)
 
@@ -517,7 +565,7 @@ class MsxExchange:
             log.exception(e)
             return []
 
-    async def _fetch_spot_symbols(self) -> List[str]:
+    async def _fetch_spot_symbols(self) -> List[Dict[str, Any]]:
         """
         从现货 API 获取交易对列表
         
@@ -544,16 +592,22 @@ class MsxExchange:
                 log.warning(f"现货交易对列表格式异常: {stock_list}")
                 return []
             
-            # 只返回前端需要的精简字段：symbol, name
+            # 返回精简字段：symbol, name, price
             result: List[Dict[str, Any]] = []
             for stock in stock_list:
                 symbol = (stock.get("symbol") or "").strip()
                 if not symbol:
                     continue
                 
+                try:
+                    price = float(stock.get("price", 0) or 0)
+                except (TypeError, ValueError):
+                    price = 0.0
+
                 item = {
                     "symbol": symbol,
                     "name": stock.get("name", ""),
+                    "price": price,
                 }
                 result.append(item)
             
@@ -642,10 +696,160 @@ class MsxExchange:
             log.error(f"❌ 解析K线数据失败: {e}")
             log.exception(e)
     
+    def _guess_symbol_co_type(self, symbol: str) -> Optional[int]:
+        """
+        根据 symbol 特征猜测 co_type
+        
+        参数:
+            symbol: 交易对符号
+        
+        返回:
+            Optional[int]: 1=股票合约, 3=加密货币合约, None=未知
+        """
+        symbol = symbol.strip().upper()
+        
+        # 常见的加密货币后缀
+        crypto_suffixes = ["USDT", "BTC", "ETH", "BNB", "SOL", "ADA", "DOT", "LINK", "MATIC", "AVAX"]
+        
+        # 如果 symbol 以常见加密货币后缀结尾，可能是加密货币合约
+        if any(symbol.endswith(suffix) for suffix in crypto_suffixes):
+            return 3
+        
+        # 如果 symbol 是 1-5 个大写字母，可能是股票代码
+        if symbol.isalpha() and 1 <= len(symbol) <= 5:
+            return 1
+        
+        # 默认返回 None，表示未知
+        return None
+    
     async def fetch_ticker(self, symbol: str):
         """
-        获取K线数据
+        获取最新价格/行情
+        
+        优先返回本地缓存的 ticker 或 _markets 中的价格，
+        若不存在则根据 symbol 属性判断 co_type，直接调用对应的合约 API 获取价格。
         """
+        if not symbol:
+            return {}
+
+        symbol = symbol.strip().upper()
+
+        # 1. 检查本地 ticker 缓存
+        cached_ticker = self._tickers.get(symbol)
+        if cached_ticker and isinstance(cached_ticker, dict) and cached_ticker.get("last") is not None:
+            return cached_ticker
+
+        # 2. 检查 _markets 缓存（parse_product_page 会更新这里）
+        market_info = self._markets.get(symbol)
+        if market_info and isinstance(market_info, dict):
+            price = market_info.get("price", 0)
+            if price and price > 0:
+                ticker = {
+                    "symbol": symbol,
+                    "last": price,
+                    "price": price,
+                }
+                self._tickers[symbol] = ticker
+                return ticker
+
+        # 3. 根据 symbol 属性判断 co_type，直接获取价格
+        try:
+            # 3.1 尝试猜测 co_type
+            guessed_co_type = self._guess_symbol_co_type(symbol)
+            
+            # 3.2 如果猜测到 co_type，直接调用对应的 API
+            if guessed_co_type:
+                contract_list = await self._fetch_contract_symbols(co_type=guessed_co_type)
+                for item in contract_list:
+                    if (item.get("symbol") or "").strip().upper() == symbol:
+                        price = float(item.get("price", 0) or 0)
+                        if price > 0:
+                            ticker = {
+                                "symbol": symbol,
+                                "last": price,
+                                "price": price,
+                            }
+                            self._tickers[symbol] = ticker
+                            return ticker
+            
+            # 3.3 如果猜测失败或未找到，尝试另一个 co_type（股票和加密货币互斥）
+            if guessed_co_type == 1:
+                # 如果猜测是股票但没找到，尝试加密货币
+                contract_list = await self._fetch_contract_symbols(co_type=3)
+                for item in contract_list:
+                    if (item.get("symbol") or "").strip().upper() == symbol:
+                        price = float(item.get("price", 0) or 0)
+                        if price > 0:
+                            ticker = {
+                                "symbol": symbol,
+                                "last": price,
+                                "price": price,
+                            }
+                            self._tickers[symbol] = ticker
+                            return ticker
+            elif guessed_co_type == 3:
+                # 如果猜测是加密货币但没找到，尝试股票
+                contract_list = await self._fetch_contract_symbols(co_type=1)
+                for item in contract_list:
+                    if (item.get("symbol") or "").strip().upper() == symbol:
+                        price = float(item.get("price", 0) or 0)
+                        if price > 0:
+                            ticker = {
+                                "symbol": symbol,
+                                "last": price,
+                                "price": price,
+                            }
+                            self._tickers[symbol] = ticker
+                            return ticker
+            else:
+                # 如果无法猜测，尝试股票合约（默认）
+                contract_list = await self._fetch_contract_symbols(co_type=1)
+                for item in contract_list:
+                    if (item.get("symbol") or "").strip().upper() == symbol:
+                        price = float(item.get("price", 0) or 0)
+                        if price > 0:
+                            ticker = {
+                                "symbol": symbol,
+                                "last": price,
+                                "price": price,
+                            }
+                            self._tickers[symbol] = ticker
+                            return ticker
+                
+                # 如果股票合约没找到，尝试加密货币合约
+                contract_list = await self._fetch_contract_symbols(co_type=3)
+                for item in contract_list:
+                    if (item.get("symbol") or "").strip().upper() == symbol:
+                        price = float(item.get("price", 0) or 0)
+                        if price > 0:
+                            ticker = {
+                                "symbol": symbol,
+                                "last": price,
+                                "price": price,
+                            }
+                            self._tickers[symbol] = ticker
+                            return ticker
+        except Exception as e:
+            log.error(f"从合约产品列表获取价格失败: symbol={symbol}, {e}")
+
+        # 4. 尝试从现货列表中获取
+        try:
+            spot_list = await self._fetch_spot_symbols()
+            for item in spot_list:
+                if (item.get("symbol") or "").strip().upper() == symbol:
+                    price = float(item.get("price", 0) or 0)
+                    if price > 0:
+                        ticker = {
+                            "symbol": symbol,
+                            "last": price,
+                            "price": price,
+                        }
+                        self._tickers[symbol] = ticker
+                        return ticker
+        except Exception as e:
+            log.error(f"从现货列表获取价格失败: symbol={symbol}, {e}")
+
+        # 5. 仍然没有则返回空字典（保持旧行为）
         return self._tickers.get(symbol, {})
 
     async def change_symbol(self, symbol: str):

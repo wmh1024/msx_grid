@@ -234,7 +234,10 @@ class GridStrategy:
                 self._trading_status_cache["is_trade"] = is_trade
                 self._trading_status_cache["start_trade_time"] = start_trade_time
                 # 设置last_update_time为当前时间+1小时（3600秒）
-                self._trading_status_cache["last_update_time"] = current_time + 3600
+                if is_trade:
+                    self._trading_status_cache["last_update_time"] = current_time + 3600
+                else:
+                    self._trading_status_cache["last_update_time"] = start_trade_time 
                 
                 log.debug(f"交易状态已更新: isTrade={is_trade}, startTradeTime={start_trade_time}")
                 return is_trade
@@ -298,21 +301,51 @@ class GridStrategy:
         
         # 注意：交易时段判断已在 run 方法中完成，这里直接执行初始化逻辑
         # ========== 步骤1: 清理历史挂单 ==========
+        # 注意：fetch_orders 可能返回 None，这里需要做空值保护
         orders = await self.exchange.fetch_orders(symbol)
-        log.info(f"初始化持仓: {symbol}, size={symbol_data['position'].size}, amount={symbol_data['position'].amount}")
-        log.info(f"撤消所有挂单: {symbol}, {len(orders)}")
-        for order in orders:
-            log.info(f"撤消挂单: {symbol}, {order.id}")
-            await self.exchange.cancel_order(order.id)
-        log.info(f"撤消所有挂单完成: {symbol}")
+        log.info(
+            f"初始化持仓: {symbol}, size={symbol_data['position'].size}, "
+            f"amount={symbol_data['position'].amount}"
+        )
+        if not orders:
+            # 没有挂单或获取失败时，直接跳过撤单逻辑，避免 NoneType 异常
+            log.info(f"撤消所有挂单: {symbol}, 0（无挂单或获取失败）")
+        else:
+            log.info(f"撤消所有挂单: {symbol}, {len(orders)}")
+            for order in orders:
+                try:
+                    log.info(f"撤消挂单: {symbol}, {order.id}")
+                    await self.exchange.cancel_order(order.id)
+                except Exception as e:
+                    log.error(f"撤消挂单失败: {symbol}, order_id={getattr(order, 'id', None)}, error={e}")
+            log.info(f"撤消所有挂单完成: {symbol}")
 
         # ========== 步骤2: 获取价格和持仓信息 ==========
         ticker = await self.exchange.fetch_ticker(symbol)
         if ticker:
-            symbol_data["current_price"] = ticker.get("last")
-            if symbol_data["start_price"] is None:
-                symbol_data["start_price"] = symbol_data["current_price"]
-                log.info(f"策略启动价格已记录: {symbol}, {symbol_data['start_price']}")
+            last_price = ticker.get("last")
+            if last_price is not None:
+                symbol_data["current_price"] = last_price
+        
+        # 如果通过行情未能获取到当前价格，初始化阶段不允许跳过，
+        # 使用配置的价格区间中位数作为回退方案，确保后续逻辑可以继续。
+        if symbol_data.get("current_price") is None:
+            min_cfg = symbol_data.get("min_price")
+            max_cfg = symbol_data.get("max_price")
+            if min_cfg is not None and max_cfg is not None and max_cfg > min_cfg:
+                fallback_price = (min_cfg + max_cfg) / 2
+                symbol_data["current_price"] = fallback_price
+                log.warning(
+                    f"无法从行情获取当前价格，使用价格区间中位数作为回退: "
+                    f"{symbol}, 区间=[{min_cfg}, {max_cfg}], 中位数={fallback_price}"
+                )
+            else:
+                raise ValueError(f"初始化阶段无法获取当前价格且价格区间无效: {symbol}")
+
+        # 记录启动价格（仅首次）
+        if symbol_data["start_price"] is None:
+            symbol_data["start_price"] = symbol_data["current_price"]
+            log.info(f"策略启动价格已记录: {symbol}, {symbol_data['start_price']}")
         
         positions = await self.exchange.fetch_positions(symbol)
         has_position = False
@@ -371,10 +404,17 @@ class GridStrategy:
             log.info(f"初始化 last_filled_time: {symbol}, 0 (无历史订单)")
         
         # ========== 步骤6: 处理网格订单创建逻辑 ==========
-        log.info(f"开始创建网格订单: {symbol}")
-        await self._place_grid_orders(symbol, symbol_data["current_price"], each_order_size)
-        await asyncio.sleep(2)
-        log.info(f"网格订单创建完成: {symbol}")
+        # 初始化阶段不允许跳过网格订单创建，如果仍然无法得到价格则抛出异常
+        current_price = symbol_data.get("current_price")
+        if current_price is None:
+            raise ValueError(f"初始化阶段当前价格为空，无法创建网格订单: {symbol}")
+        elif each_order_size <= 0:
+            log.warning(f"每单持仓数量为 0，跳过网格订单创建: {symbol}")
+        else:
+            log.info(f"开始创建网格订单: {symbol}")
+            await self._place_grid_orders(symbol, current_price, each_order_size)
+            await asyncio.sleep(2)
+            log.info(f"网格订单创建完成: {symbol}")
     
         # ========== 步骤7: 统一设置初始化状态 ==========
         # 只有在建仓成功且创建网格订单成功时，才标记为已完成初始化
@@ -442,10 +482,10 @@ class GridStrategy:
                                 
                                 # ========== 步骤4.3: 在交易时段，执行正常的交易检查 ==========
                                 await self.check_order(symbol)
-                            else:
+                           # else:
                                 # ========== 步骤4.4: 不在交易时段，跳过交易操作 ==========
                                 # 休市时不需要执行任何操作，只需等待
-                                log.debug(f"策略 {symbol} 不在交易时段，跳过交易操作")
+                             #  log.debug(f"策略 {symbol} 不在交易时段，跳过交易操作")
                         
                         except Exception as e:
                             # 某个 symbol 出错不应影响其他 symbol
@@ -647,6 +687,86 @@ class GridStrategy:
             max_ts = max(o["timestamp"] for o in his_order if o.get("timestamp"))
             symbol_data["last_filled_time"] = max(last_filled_time, max_ts)
 
+    def _load_orders_from_csv(self, symbol: str, pos_id: int) -> tuple[list[dict[str, Any]], int]:
+        """
+        从CSV文件加载历史订单记录（支持多 symbol）
+        
+        参数：
+            symbol: 交易对符号
+            pos_id: 持仓ID
+        
+        文件命名：{pos_id}_orders.csv
+        存储位置：项目根目录的 data/orders/ 目录
+        
+        返回：
+            tuple[list[dict], int]: (订单记录列表, 最大时间戳)
+        """
+        records = []
+        max_timestamp = 0
+        
+        try:
+            # 确定存储目录
+            base_dir = Path(__file__).resolve().parent.parent
+            orders_dir = base_dir / "data" / "orders"
+            
+            if not orders_dir.exists():
+                log.debug(f"订单目录不存在，无法加载历史订单: {symbol}, pos_id={pos_id}")
+                return records, max_timestamp
+            
+            # 确定文件名
+            filename = f"{pos_id}_orders.csv"
+            filepath = orders_dir / filename
+            
+            if not filepath.exists():
+                log.debug(f"历史订单文件不存在: {filepath}，跳过加载: {symbol}")
+                return records, max_timestamp
+            
+            # 读取CSV文件
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                
+                for row in reader:
+                    try:
+                        # 解析订单记录
+                        record = {
+                            "order_id": row.get("order_id", ""),
+                            "symbol": row.get("symbol", symbol),
+                            "side": row.get("side", ""),
+                            "open_type": int(row.get("open_type", 1)),
+                            "price": float(row.get("price", 0.0) or 0.0),
+                            "volume": float(row.get("volume", 0.0) or 0.0),
+                            "pnl": float(row.get("pnl", 0.0) or 0.0),
+                            "fee": float(row.get("fee", 0.0) or 0.0),
+                            "timestamp": int(row.get("timestamp", 0) or 0),
+                            "status": row.get("status", ""),
+                            "pos_id": int(row.get("pos_id", pos_id) or pos_id),
+                            "avg_price": float(row.get("avg_price", 0.0) or 0.0),
+                        }
+                        
+                        # 验证记录有效性
+                        if record["timestamp"] > 0:
+                            records.append(record)
+                            # 更新最大时间戳
+                            if record["timestamp"] > max_timestamp:
+                                max_timestamp = record["timestamp"]
+                    except (ValueError, TypeError) as e:
+                        log.warning(f"解析CSV订单记录失败，跳过: {symbol}, row={row}, error={e}")
+                        continue
+            
+            # 按时间戳排序（确保顺序正确）
+            records.sort(key=lambda o: o.get("timestamp", 0))
+            
+            if len(records) > 0:
+                log.info(f"从CSV加载历史订单: {symbol}, pos_id={pos_id}, 加载了 {len(records)} 条记录，max_timestamp={max_timestamp}")
+            else:
+                log.debug(f"CSV文件中无有效订单记录: {symbol}, pos_id={pos_id}")
+            
+        except Exception as e:
+            log.error(f"从CSV加载历史订单失败: {symbol}, pos_id={pos_id}, {e}")
+            log.error(traceback.format_exc())
+        
+        return records, max_timestamp
+    
     def _persist_order_to_csv(self, symbol: str, order_record: dict, pos_id: int) -> None:
         """
         将订单记录持久化到CSV文件（支持多 symbol）
@@ -887,11 +1007,18 @@ class GridStrategy:
                     symbol_data["position"].liquidationPrice = position.liquidationPrice
                     symbol_data["position"].timestamp = position.timestamp
                     
+                    # ========== 步骤4: 从CSV文件加载历史订单记录 ==========
+                    his_orders, max_timestamp = self._load_orders_from_csv(symbol, pos_id)
+                    symbol_data["his_order"] = his_orders
+                    # 更新 last_filled_time（使用CSV中的最大时间戳和JSON中的时间戳的较大值）
+                    if max_timestamp > symbol_data.get("last_filled_time", 0):
+                        symbol_data["last_filled_time"] = max_timestamp
+                    
                     # 添加到字典
                     self.symbols[symbol] = symbol_data
                     loaded_count += 1
                     
-                    log.info(f"策略已加载: {symbol}, 文件={strategy_file.name}, pos_id={pos_id}, size={position.size}")
+                    log.info(f"策略已加载: {symbol}, 文件={strategy_file.name}, pos_id={pos_id}, size={position.size}, 历史订单数={len(symbol_data['his_order'])}")
                     
                     # 自动启动策略
                     self.symbols[symbol]["_status"] = True
@@ -944,11 +1071,25 @@ class GridStrategy:
             return
         
         symbol_data = self.symbols[symbol]
-        grid_spacing = symbol_data["grid_spacing"]
-        direction = symbol_data["direction"]
-        min_price = symbol_data["min_price"]
-        max_price = symbol_data["max_price"]
-        position = symbol_data["position"]
+        grid_spacing = symbol_data.get("grid_spacing")
+        direction = symbol_data.get("direction")
+        min_price = symbol_data.get("min_price")
+        max_price = symbol_data.get("max_price")
+        position = symbol_data.get("position", Position())
+        
+        # 参数有效性检查，避免 NoneType 运算错误
+        if filled_price is None:
+            log.warning(f"filled_price 为空，无法创建网格订单: {symbol}")
+            return
+        if grid_spacing is None:
+            log.warning(f"grid_spacing 未初始化，无法创建网格订单: {symbol}")
+            return
+        if min_price is None or max_price is None:
+            log.warning(f"价格区间未初始化，无法创建网格订单: {symbol}")
+            return
+        if order_volume is None or order_volume <= 0:
+            log.warning(f"订单数量无效（{order_volume}），无法创建网格订单: {symbol}")
+            return
         
         # 计算新订单价格
         new_buy_price = filled_price * (1 - grid_spacing)
@@ -1650,14 +1791,14 @@ class GridStrategy:
         if symbol is None:
             # 返回所有策略的状态列表
             strategies = []
-            log.info(f"获取所有策略状态，当前 symbols 数量: {len(self.symbols)}")
+         #   log.info(f"获取所有策略状态，当前 symbols 数量: {len(self.symbols)}")
             for sym in self.symbols.keys():
                 try:
                     status = self._get_symbol_status(sym)
                     # status 可能是 None 或字典，只有字典才添加到列表
                     if status is not None:
                         strategies.append(status)
-                        log.info(f"策略 {sym} 状态已添加到列表，running={status.get('running')}")
+                     #   log.info(f"策略 {sym} 状态已添加到列表，running={status.get('running')}")
                     else:
                         log.warning(f"策略 {sym} 状态为 None，未添加到列表")
                 except Exception as e:
